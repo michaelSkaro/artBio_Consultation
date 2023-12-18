@@ -1,0 +1,311 @@
+---
+Title: "TranscriptomicProfilingTCGA"
+author: "Michael Skaro PhD"
+Date of work begin: "2023-11-29"
+Data output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Transcriptomic profiling of TCGA database
+
+
+
+
+The objective of this study is to profile The Cancer Genomes Atlas for expression
+data in tumor and normal samples. The expression data will be analyzed with the 
+intent to illuminate gene expression differences in genes encoding surface proteins.
+
+Steps in the analysis:
+
+- The TCGAbiolinks package will be used to access and analyze the expression data. 
+
+- The differentially expressed genes for each of the indication will be listed.
+
+- Upregualted genes in each indication will be intersected with the list of genes
+encoding surface proteins.
+
+- The 25th, 50th, 75th and 100th percentile of each of the GESP gene's expression 
+will be listed for each indication in the TCGA database 
+(TPM/FPKM availability dependent).
+
+Visualizations:
+
+- Heatmap of FC/Normal in indications where matched normal is available.
+- Venn Diagram of intersection from GESP list and DEG list for each indication.
+- Box plot for each differentially expressed gene in the intersected list. 
+- PCA plot for tumor and normal tissues based solely on the DE GESPs
+
+Filtering for Top30
+
+A list of the top30 genes in each indication will be conducted. The genes
+will be ranked on their fold change over normal and a pvalue below 0.01. 
+Then the genes will be filtered on criteria described by ARTbio team. 
+
+Filtering criteria:
+
+- Exclude targets with tumor enrichment but ‘significant’ expression in colon, 
+small intestine or haem compartments. The ARTbio team has not defined significant
+but there is literature precedent to suggest high expression of surface targets
+that have been successfully targeted with an ADC it 35TPM. We can use that as a 
+minimum. 
+
+- The average expression of constitutively expressed genes such as GAPDH
+will be used as the upper limit. The median of expression in the colon between the
+two will be used as a level for flagging. 
+
+Non-visual outputs:
+
+- Correlation between expression in TCGA and in the HPA database may/may not be
+possible depending on the availability of data. Case by case basis will be used
+and will be flagged as NA if this portion of the analysis cannot be executed 
+due to missingness of the data. 
+
+
+```{r libraries, echo=FALSE, message=FALSE}
+
+# The libraries that listed below are required to reproduce the analysis. 
+# BiocManager::install("TCGAbiolinks")
+library(BiocManager)
+library(TCGAbiolinks)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(stringr)
+library(EDASeq)
+library(edgeR)
+library(org.Hs.eg.db)
+library(UCSCXenaTools)
+```
+
+
+
+
+#### Differential expression analysis in TCGA
+
+This function will satisfy the first objective in that it will process and analyze
+each of the projects in the TCGA database and produce a results table. The results
+table will be used to 
+
+
+```{r Function for sourcing expression data, echo=FALSE}
+
+differential_expression_data_TCGA_projects <- function(proj){
+  # Input: String, TCGA project 4 letter code
+  # Output: expression data from TCGA project passed, type: S4
+  # Libraries used: TCGAbiolinks
+  
+  query_exp <- GDCquery(
+  project = str_glue("TCGA-{proj}"),
+  data.category = "Transcriptome Profiling",
+  data.type = "Gene Expression Quantification", 
+  workflow.type = "STAR - Counts")
+  
+  print("query exp done")
+  GDCdownload(query_exp)
+  Rnaseq.SE <- GDCprepare(query_exp)
+  RNAseq_CorOutliers <- TCGAanalyze_Preprocessing(Rnaseq.SE)
+  dataNorm <- TCGAanalyze_Normalization(tabDF = RNAseq_CorOutliers, geneInfo =  geneInfoHT)
+  dataFilt <- TCGAanalyze_Filtering(tabDF = dataNorm,method = "quantile", qnt.cut =  0.25)
+  samplesNT <- TCGAquery_SampleTypes(barcode = colnames(dataFilt),typesample = c("NT"))
+  samplesTP <- TCGAquery_SampleTypes(barcode = colnames(dataFilt), typesample = c("TP"))
+  
+  # take the length of the samplesNT and the length of the samplesTP, if the length of the
+  # samples is not >10 move on. 
+  
+  if(length(samplesNT) <10){
+    
+    print(str_glue("{proj} does not have enough samples, skipping this project"))
+
+    dataDEGs <- NA    
+    
+  } else{
+
+  dataDEGs <- TCGAanalyze_DEA(
+    mat1 = dataFilt[,samplesNT],
+    mat2 = dataFilt[,samplesTP],
+    Cond1type = "Normal",
+    Cond2type = "Tumor",
+    #fdr.cut = 0.01,
+    #logFC.cut = 1,
+    method = "glmLRT")
+  
+  save(dataDEGs,file = str_glue("Res_TCGA_{proj}.Rdata"))
+  
+  data.table::fwrite(file = str_glue("Res_Gene_expression_TCGA_{proj}.txt"), x = dataDEGs)
+  
+  
+  }
+  
+  return(dataDEGs)
+  
+}
+
+```
+
+```{r Create function for labeling results, echo=FALSE, message=FALSE}
+
+label_results_table <- function(dataDEGs, proj, GESPs){
+  dat <- dataDEGs %>%
+    tibble::rownames_to_column("ENSEMBL_ID") %>%
+    dplyr::mutate(TGCA_project = proj) %>%
+    dplyr::left_join(GESPs, by = c("gene_name", "ENSEMBL_ID")) %>%
+    dplyr::filter(!is.na(surface))
+  dat$diff <- "notsig"
+  dat$diff[dat$logFC> 1 & dat$FDR<0.01] <- "up_regulated"
+  dat$diff[dat$logFC< -1 & dat$FDR<0.01] <- "down_regulated"
+  
+  ensgs <- dat %>%
+    dplyr::pull(ENSEMBL_ID)
+  
+  cols <- c("SYMBOL","ENZYME", "GENENAME")
+  val <- as.data.frame(select(org.Hs.eg.db, keys=ensgs, columns=cols, keytype="ENSEMBL"))
+  colnames(val) <- c("ENSEMBL_ID", "gene_name", "Enzyme", "Gene_class")
+  
+  dat <- dat %>%
+    dplyr::left_join(val, by = c("ENSEMBL_ID", "gene_name")) %>%
+    dplyr::arrange(desc(logFC))
+  
+  return(dat)
+  
+}
+
+
+```
+
+
+```{r Download XenaData for gene expression TPMs}
+
+data(XenaData)
+
+geneExpression <- XenaData %>% dplyr::filter(DataSubtype == "gene expression RNAseq")
+percentileRank <- geneExpression %>% dplyr::filter(Unit =="percentile rank")
+
+# pancancer TPMs
+
+# tcga_target_no_normal_rsem_gene_tpm, toilHub
+xo <- XenaGenerate(subset = XenaHostNames=="toilHub") %>% 
+  XenaFilter(filterDatasets = "tcga_target_no_normal_rsem_gene_tpm")
+
+xe <- XenaQuery(pancancerGeneTPMsObject)
+xd <- XenaDownload(xe, destdir = "/Volumes/My Passport/artBio_consultation/data/", download_probeMap = TRUE)
+
+# GtexPanNormal
+
+# gtex_RSEM_gene_tpm, toilHub
+
+
+xo <- XenaGenerate(subset = XenaHostNames=="toilHub") %>% 
+  XenaFilter(filterCohorts = "GTEX", ignore.case = FALSE) %>%
+  XenaFilter(filterDatasets = "gtex_RSEM_gene_tpm", ignore.case = FALSE)
+xe <- XenaQuery(xo)
+xd <- XenaDownload(xe, destdir = "/Volumes/My Passport/artBio_consultation/data/", download_probeMap = TRUE)
+
+# download the data for the percentiles
+list.of.datasets <- unique(percentileRank$XenaDatasets)
+list.of.cohorts <- unique(percentileRank$XenaCohorts)
+for(i in 1:length(list.of.datasets)){
+  dat <- list.of.datasets[i]
+  cohort <- list.of.cohorts[i]
+  #host.name <- "tcgaHub"
+  xo = XenaGenerate(subset = XenaHostNames == "tcgaHub") %>%
+    XenaFilter(filterDatasets = dat, ignore.case = FALSE)
+  xe <- XenaQuery(xo)
+  xd <- XenaDownload(xe, destdir = "/Volumes/My Passport/artBio_consultation/data/gene_expression_ranks/", download_probeMap = TRUE)
+
+  
+}
+
+```
+
+```{r Build function for visualizing barplot }
+
+val <- "/Volumes/My Passport/artBio_consultation/results/Res_Gene_expression_TCGA_BLCA.txt"
+
+bar.plot <- function(val){
+  res.table <- data.table::fread(val)
+  res.table$diff <- "notsig"
+  res.table$diff[res.table$logFC> 1 & res.table$FDR<0.01] <- "up_regulated"
+  res.table$diff[res.table$logFC< -1 & res.table$FDR<0.01] <- "down_regulated"
+  proj <- str_split(val, pattern = "_")
+  proj <- proj[[1]][6]
+  proj <- str_split(proj, pattern = "\\.")
+  proj <- proj[[1]][1]
+  
+  res.table <- res.table %>%
+    dplyr::group_by(diff) %>%
+    dplyr::summarise(Count = n()) %>%
+    dplyr::mutate(diff = str_replace_all(string = diff, pattern = "down_regulated", replacement = "DownRegulated")) %>%
+    dplyr::mutate(diff = str_replace_all(string = diff, pattern = "up_regulated", replacement = "UpRegulated")) %>%
+    dplyr::mutate(diff = str_replace_all(string = diff, pattern = "notsig", replacement = "NotSignificant")) 
+  res.table$diff <- factor(res.table$diff, levels = c("DownRegulated", "UpRegulated", "NotSignificant"))
+  colors <- c("DownRegulated" = "Blue", "UpRegulated" = "firebrick", "NotSignificant" = "gray52")
+  p <- ggplot2::ggplot(data = res.table, aes(x = diff, y = Count, fill = diff)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    scale_fill_manual(values = colors) +
+    geom_text(aes(label = Count), vjust = -.2) +
+    labs(fill = "DE Genes") +
+    ggtitle(str_glue("Differentially Expressed Genes in TCGA-{proj}")) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+    
+}
+
+
+
+
+```
+
+
+
+
+
+```{r Run analysis, echo=FALSE, message=FALSE}
+
+# main
+tcga.projects <- c("ACC","BLCA","LGG","BRCA","CESC","ESCA","GBM","HNSC","KICH","KIRC","KIRP","LIHC","LUAD","LUSC","DLBC","MESO","OV","PAAD","PCPG","PRAD","READ","SARC","SKCM","STAD","TGCT","THYM","THCA","UCS","UCEC","UVM")
+GESPs <- data.table::fread("/Volumes/My Passport/artBio_consultation/data/GESPs.txt")
+
+for(i in 1:length(tcga.projects)){
+
+  proj <- tcga.projects[i]
+  print(proj)
+  proj.res <- differential_expression_data_TCGA_projects(proj = proj)
+  
+  
+  
+  if(is.object(proj.res)){
+    dataDEGs.labs <- label_results_table(proj.res, proj, GESPs)
+    data.table::fwrite(file = str_glue("{proj}_de_gesps_table.txt"), x = dataDEGs.labs)
+    
+  }
+  
+}
+
+
+```
+
+
+
+
+
+
+
+
+### Citations
+
+- Colaprico, Antonio, et al. “TCGAbiolinks: an R/Bioconductor package for integrative analysis of TCGA data.” Nucleic acids research 44.8 (2015): e71-e71.
+
+- Silva, Tiago C., et al. “TCGA Workflow: Analyze cancer genomics and epigenomics data using Bioconductor packages.” F1000Research 5 (2016). (https://f1000research.com/articles/5-1542/v2)
+
+- Mounir, Mohamed, et al. “New functionalities in the TCGAbiolinks package for the study and integration of cancer data from GDC and GTEx.” PLoS computational biology 15.3 (2019): e1006701. (https://doi.org/10.1371/journal.pcbi.1006701)
+
+
+
+
+
+
+
+
+
