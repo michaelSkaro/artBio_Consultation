@@ -77,6 +77,7 @@ library(EDASeq)
 library(edgeR)
 library(org.Hs.eg.db)
 library(UCSCXenaTools)
+library(R.utils)
 ```
 
 
@@ -184,11 +185,11 @@ percentileRank <- geneExpression %>% dplyr::filter(Unit =="percentile rank")
 
 # pancancer TPMs
 
-# tcga_target_no_normal_rsem_gene_tpm, toilHub
+# tcga_RSEM_gene_tpm, toilHub
 xo <- XenaGenerate(subset = XenaHostNames=="toilHub") %>% 
-  XenaFilter(filterDatasets = "tcga_target_no_normal_rsem_gene_tpm")
+  XenaFilter(filterDatasets = "tcga_RSEM_gene_tpm")
 
-xe <- XenaQuery(pancancerGeneTPMsObject)
+xe <- XenaQuery(xo)
 xd <- XenaDownload(xe, destdir = "/Volumes/My Passport/artBio_consultation/data/", download_probeMap = TRUE)
 
 # GtexPanNormal
@@ -282,7 +283,7 @@ GESP.bar.plot <- function(val){
 gene.list.from.res.tables <- function(res.table){
   
   gene.list <- res.table %>%
-    dplyr::filter(dff != "notsig") %>%
+    dplyr::filter(diff != "notsig") %>%
     dplyr::pull(ENSEMBL_ID)
   
   return(gene.list)
@@ -291,6 +292,27 @@ gene.list.from.res.tables <- function(res.table){
 
 
 ```
+
+
+```{r load gene expression data from a project}
+
+val <- "/Volumes/My Passport/artBio_consultation/data/tcga_RSEM_gene_tpm.gz"
+tcga.tmps <- data.table::fread(val)
+tcga.clin.metadata <- data.table::fread("/Volumes/My Passport/artBio_consultation/data/TCGA_patient_metadata.txt")
+
+# take large matrix, distill down to TCGA project of interest
+# substring 1:15 in sample ID column
+# select only the DE genes 
+# why are there no normal expressions in this analysis? Maybe TCGA biolinks or UCSC has specifically the normal data?
+
+
+generate.a.gene.expression.matrix <- function(proj, val){
+  
+}
+
+
+```
+
 
 
 
@@ -303,11 +325,14 @@ gene.list.from.res.tables <- function(res.table){
 # the annotated genes from the GESP paper. Intersect them to make a Venn diagram and 
 # make a HM of each of these genes using the CPMs or TPMs? 
 
-
-
-
-
-
+create.heatmap.from.DE.genes <- function(gene.list, gene.expression.matrix){
+  
+  
+  
+  
+  
+  
+}
 
 
 
@@ -361,6 +386,32 @@ for(i in 1:length(list.of.DGE.res.tables)){
   p <- GESP.bar.plot(val = val)
   ggsave(filename = str_glue("/Volumes/My Passport/artBio_consultation/results/barplots/TCGA-{proj}_gesp_dge_counts.pdf"), plot = p, device = "pdf", width = 9, height = 7, units = "in")
 }
+
+counter =0
+for(i in 1:length(list.of.GESPs.res.tables)){
+  val <- list.of.GESPs.res.tables[i]
+  val <- paste0("/Volumes/My Passport/artBio_consultation/results/GESP_resTables/", val)
+  res.table <- data.table::fread(val)
+  
+  temp.list <- gene.list.from.res.tables(res.table)
+  
+  
+  if(counter == 0){
+    gene.list <- temp.list
+    counter = counter +1
+  } else{
+    gene.list <- c(gene.list, temp.list)
+    gene.list <- unique(gene.list)
+  }
+
+}
+
+de.gesps.list <- as.data.frame(gene.list)
+colnames(de.gesps.list)[1] <- "DE_GESPs"
+data.table::fwrite(file = "/Volumes/My Passport/artBio_consultation/results/DE_gesps.txt", x = de.gesps.list)
+
+
+
 
 
 ```
