@@ -276,7 +276,44 @@ GESP.bar.plot <- function(val){
 
 ```
 
+```{r Pull DE genes from differential expression analsyis}
 
+# The differentially expressed genes from a res.table 
+gene.list.from.res.tables <- function(res.table){
+  
+  gene.list <- res.table %>%
+    dplyr::filter(dff != "notsig") %>%
+    dplyr::pull(ENSEMBL_ID)
+  
+  return(gene.list)
+  
+}
+
+
+```
+
+
+
+```{r Build functions for Heatmaps for DE genes}
+# In this section we will use the list of differentially expressed genes from 
+# each of the indications analyzed to produce a Heatmap for each of the projects
+# Then we will also create a unified Heat map where we make a single plot with each
+# of the projects as a column and each DE gene from any project as a row.
+# Finally, we will take the the top30 genes from each of the indications and 
+# the annotated genes from the GESP paper. Intersect them to make a Venn diagram and 
+# make a HM of each of these genes using the CPMs or TPMs? 
+
+
+
+
+
+
+
+
+
+
+
+```
 
 
 
