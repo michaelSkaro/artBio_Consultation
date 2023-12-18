@@ -221,9 +221,7 @@ for(i in 1:length(list.of.datasets)){
 
 ```{r Build function for visualizing barplot }
 
-val <- "/Volumes/My Passport/artBio_consultation/results/Res_Gene_expression_TCGA_BLCA.txt"
-
-bar.plot <- function(val){
+DGE.bar.plot <- function(val){
   res.table <- data.table::fread(val)
   res.table$diff <- "notsig"
   res.table$diff[res.table$logFC> 1 & res.table$FDR<0.01] <- "up_regulated"
@@ -245,14 +243,35 @@ bar.plot <- function(val){
     geom_bar(stat = "identity", position = "dodge") +
     scale_fill_manual(values = colors) +
     geom_text(aes(label = Count), vjust = -.2) +
-    labs(fill = "DE Genes") +
+    labs(fill = "DE Genes", caption = "absL2FC >1, adj.pvalue <0.01") +
     ggtitle(str_glue("Differentially Expressed Genes in TCGA-{proj}")) +
+    xlab("Differential Expression results vs. adjacent Normal") +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
     
+  return(p)
 }
 
-
+GESP.bar.plot <- function(val){
+  res.table <- data.table::fread(val) %>%
+    dplyr::group_by(diff) %>%
+    dplyr::summarise(Count = n()) %>%
+    dplyr::mutate(diff = str_replace_all(string = diff, pattern = "down_regulated", replacement = "DownRegulated")) %>%
+    dplyr::mutate(diff = str_replace_all(string = diff, pattern = "up_regulated", replacement = "UpRegulated")) %>%
+    dplyr::mutate(diff = str_replace_all(string = diff, pattern = "notsig", replacement = "NotSignificant")) 
+  res.table$diff <- factor(res.table$diff, levels = c("DownRegulated", "UpRegulated", "NotSignificant"))
+  colors <- c("DownRegulated" = "Blue", "UpRegulated" = "firebrick", "NotSignificant" = "gray52")
+  p <- ggplot2::ggplot(data = res.table, aes(x = diff, y = Count, fill = diff)) +
+    geom_bar(stat = "identity", position = "dodge") +
+    scale_fill_manual(values = colors) +
+    geom_text(aes(label = Count), vjust = -.2) +
+    labs(fill = "DE Genes") +
+    ggtitle(str_glue("Differentially Expressed GESPs in TCGA-{proj}")) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+    
+  return(p)
+}
 
 
 ```
@@ -284,12 +303,30 @@ for(i in 1:length(tcga.projects)){
 }
 
 
+list.of.DGE.res.tables <- list.files("/Volumes/My Passport/artBio_consultation/results/resTables/")
+list.of.GESPs.res.tables <- list.files("/Volumes/My Passport/artBio_consultation/results/GESP_resTables/")
+
+# iterate through the list of tables and pass them to the bar plot visualization functions. The functions will write out 
+# projects specific analyses for the purposes of slide deck preparations
+
+for(i in 1:length(list.of.DGE.res.tables)){
+  val <- list.of.DGE.res.tables[i]
+  val <- paste0("/Volumes/My Passport/artBio_consultation/results/resTables/", val)
+  proj <- str_split(val, pattern = "_")
+  proj <- proj[[1]][6]
+  proj <- str_split(proj, pattern = "\\.")
+  proj <- proj[[1]][1]
+  p <- DGE.bar.plot(val = val)
+  ggsave(filename = str_glue("/Volumes/My Passport/artBio_consultation/results/barplots/TCGA-{proj}_dge_counts.pdf"), plot = p, device = "pdf", width = 9, height = 7, units = "in")
+  
+  val <- list.of.GESPs.res.tables[i]
+  val <- paste0("/Volumes/My Passport/artBio_consultation/results/GESP_resTables/", val)
+  p <- GESP.bar.plot(val = val)
+  ggsave(filename = str_glue("/Volumes/My Passport/artBio_consultation/results/barplots/TCGA-{proj}_gesp_dge_counts.pdf"), plot = p, device = "pdf", width = 9, height = 7, units = "in")
+}
+
+
 ```
-
-
-
-
-
 
 
 
