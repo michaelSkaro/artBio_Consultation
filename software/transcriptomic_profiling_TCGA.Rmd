@@ -80,6 +80,7 @@ library(UCSCXenaTools)
 library(R.utils)
 library(circlize)
 library(ComplexHeatmap)
+library(fgsea)
 ```
 
 
@@ -424,52 +425,110 @@ ComplexHeatmap::draw(hm,ht_gap = unit(1, "cm"),row_title = "Genes encoding surfa
 dev.off()
 
 
+# Gene set enrichment analysis
 
-
-
-
-
-
-
+hall.mark.pathway <- fgsea::gmtPathways(gmt.file = "/Volumes/My Passport/artBio_consultation/data/h.all.v2023.2.Hs.symbols.gmt")
+kegg <- fgsea::gmtPathways(gmt.file = "/Volumes/My Passport/artBio_consultation/data/c2.cp.kegg_legacy.v2023.2.Hs.symbols.gmt")
+immuno <- fgsea::gmtPathways(gmt.file = "/Volumes/My Passport/artBio_consultation/data/c7.all.v2023.2.Hs.symbols.gmt")
+i <-  1
+counter = 0
+for(i in 1:length(projects)){
+  proj <- projects[i]
+  print(proj)
   
+  res <- dat %>%
+    dplyr::filter(Project == proj) %>%
+    dplyr::arrange(desc(logFC))
   
+  ranks <- res$logFC
+  names(ranks) <- res$gene_name
   
+  fgseaRes.hm <- as.data.frame(fgsea(hall.mark.pathway, ranks, minSize=15, maxSize = 500, nperm=1000)) %>%
+    dplyr::mutate(Project = proj)
   
+  up.regulated.hm <- fgseaRes.hm %>%
+    dplyr::arrange(desc(NES)) %>%
+    dplyr::slice(3) %>%
+    dplyr::pull(pathway)
   
-
-
-
-
-
-
-```
-
-
-
-
-```{r Build functions for Heatmaps for DE genes}
-# In this section we will use the list of differentially expressed genes from 
-# each of the indications analyzed to produce a Heatmap for each of the projects
-# Then we will also create a unified Heat map where we make a single plot with each
-# of the projects as a column and each DE gene from any project as a row.
-# Finally, we will take the the top30 genes from each of the indications and 
-# the annotated genes from the GESP paper. Intersect them to make a Venn diagram and 
-# make a HM of each of these genes using the CPMs or TPMs? 
-
-create.heatmap.from.DE.genes <- function(gene.expresison.matrix, coldata){
+  down.regulated.hm <- fgseaRes.hm %>%
+    dplyr::arrange(NES) %>%
+    dplyr::slice(3) %>%
+    dplyr::pull(pathway)
   
+  top.paths.hm <- c(up.regulated.hm, down.regulated.hm)
+  #----------------------------------------------#
+  fgseaRes.kegg <- as.data.frame(fgsea(kegg, ranks, minSize=15, maxSize = 500, nperm=1000)) %>%
+    dplyr::mutate(Project = proj)
   
+  up.regulated.kegg <- fgseaRes.kegg %>%
+    dplyr::arrange(desc(NES)) %>%
+    dplyr::slice(3) %>%
+    dplyr::pull(pathway)
   
+  down.regulated.kegg <- fgseaRes.hm %>%
+    dplyr::arrange(NES) %>%
+    dplyr::slice(3) %>%
+    dplyr::pull(pathway)
   
+  top.paths.kegg <- c(up.regulated.kegg, down.regulated.kegg)
+  #----------------------------------------------#
+  fgseaRes.immuno <- as.data.frame(fgsea(immuno, ranks, minSize=15, maxSize = 500, nperm=1000)) %>%
+    dplyr::mutate(Project = proj)
   
+  up.regulated.immuno <- fgseaRes.immuno %>%
+    dplyr::arrange(desc(NES)) %>%
+    dplyr::slice(3) %>%
+    dplyr::pull(pathway)
   
+  down.regulated.immuno <- fgseaRes.immuno %>%
+    dplyr::arrange(NES) %>%
+    dplyr::slice(3) %>%
+    dplyr::pull(pathway)
+  
+  top.paths.immuno <- c(up.regulated.immuno, down.regulated.immuno)
+  
+  if(counter == 0){
+    temp.paths.hm <- top.paths.hm
+    temp.paths.kegg <- top.paths.kegg
+    temp.paths.immuno <- top.paths.immuno
+    
+    temp.hm <- fgseaRes.hm
+    temp.kegg <- fgseaRes.kegg
+    temp.immuno <- fgseaRes.immuno
+    counter = counter +1
+  } else{
+    
+    temp.paths.hm <- unique(c(temp.paths.hm, top.paths.hm))
+    temp.paths.kegg <- unique(c(temp.paths.kegg, top.paths.kegg))
+    temp.paths.immuno <- unique(c(temp.paths.kegg, top.paths.immuno))
+    
+    temp.hm <- rbind(temp.hm, fgseaRes.hm)
+    temp.kegg <- rbind(temp.kegg, fgseaRes.kegg)
+    temp.immuno <- rbind(temp.immuno, fgseaRes.immuno)
+    
+    
+    
+  }
+    
 }
 
+data.table::fwrite(file = "/Volumes/My Passport/artBio_consultation/results/gsea/immuno_gsea.txt", x = temp.immuno)
+data.table::fwrite(file = "/Volumes/My Passport/artBio_consultation/results/gsea/kegg_gsea.txt", x = temp.immuno)
+data.table::fwrite(file = "/Volumes/My Passport/artBio_consultation/results/gsea/hallmark_gsea.txt", x = temp.immuno)
+  
+
+  
+# 
+
+
+
 
 
 
 
 ```
+
 
 
 
