@@ -78,6 +78,8 @@ library(edgeR)
 library(org.Hs.eg.db)
 library(UCSCXenaTools)
 library(R.utils)
+library(circlize)
+library(ComplexHeatmap)
 ```
 
 
@@ -295,20 +297,149 @@ gene.list.from.res.tables <- function(res.table){
 
 
 ```{r load gene expression data from a project}
-
+setwd("/Volumes/My Passport/artBio_consultation/")
 val <- "/Volumes/My Passport/artBio_consultation/data/tcga_RSEM_gene_tpm.gz"
 tcga.tmps <- data.table::fread(val)
+tcga.tmps <- tcga.tmps %>%
+  dplyr::rename("ENSEMBL" = "sample") %>%
+  dplyr::mutate(ENSEMBL = stringr::str_sub(string = ENSEMBL, start = 1, end = 15))
 tcga.clin.metadata <- data.table::fread("/Volumes/My Passport/artBio_consultation/data/TCGA_patient_metadata.txt")
-
+de.gesps <- data.table::fread("/Volumes/My Passport/artBio_consultation/results/DE_gesps.txt") %>%
+  dplyr::rename("ENSEMBL" = "DE_GESPs") %>%
+  dplyr::pull()
 # take large matrix, distill down to TCGA project of interest
-# substring 1:15 in sample ID column
-# select only the DE genes 
-# why are there no normal expressions in this analysis? Maybe TCGA biolinks or UCSC has specifically the normal data?
 
 
-generate.a.gene.expression.matrix <- function(proj, val){
+# iterate over the 16 projects for the HMs, select only the GESPs in the analysis
+# read in the results table
+# select the genes add to a running temp
+counter = 0
+list.of.files <- list.files("/Volumes/My Passport/artBio_consultation/results/Rdata")
+fil <- list.of.files[1]
+for(i in 1:length(list.of.files)){
+  fil <- list.of.files[i]
+  proj <- str_split(fil, pattern = "_")
+  proj <- proj[[1]][3]
+  proj <- str_split(proj, pattern = "\\.")
+  proj <- proj[[1]][1]
+  load(str_glue("/Volumes/My Passport/artBio_consultation/results/Rdata/{fil}"))
+  
+  res <- dataDEGs %>%
+    tibble::rownames_to_column("ENSEMBL") %>%
+    dplyr::filter(ENSEMBL %in% de.gesps) %>%
+    dplyr::mutate(Project = proj) 
+  
+  if(counter ==0){
+    temp <- res
+    counter = counter +1
+  } else {
+    temp <- rbind(temp, res)
+  }
+  
   
 }
+dat <- temp
+rm(res,temp)
+
+dat$diff <- "notsig"
+dat$diff[dat$logFC> 1 & dat$FDR<0.01] <- "up_regulated"
+dat$diff[dat$logFC< -1 & dat$FDR<0.01] <- "down_regulated"
+
+# Group by the Project and the gene, if the gene as not expressed in the project, pivot longer and fill with 0/NA
+# Pivot wider for the expression matrix
+# cluster the genes
+# create a heatmap for the sruface proteins
+# annoatate the proteins
+# conudct gene set enrichment analysis
+
+dat.long <- dat %>%
+  dplyr::mutate(diff = str_replace_all(string = diff, pattern = "up_regulated", replacement = "Up-Regulated")) %>%
+  dplyr::mutate(diff = str_replace_all(string = diff, pattern = "down_regulated", replacement = "Down-Regulated")) %>%
+  dplyr::select(Project, gene_name, logFC) %>%
+  tidyr::pivot_wider(id_cols = Project, names_from = gene_name, values_from = logFC, values_fill = NA) %>%
+  tidyr::pivot_longer(cols = -Project, names_to = "gene_name", values_to = "logFC")
+  
+  
+
+dat.wide <- dat.long %>%
+  tidyr::pivot_wider(id_cols = gene_name, names_from = Project, values_from = logFC) %>%
+  tibble::column_to_rownames("gene_name") %>%
+  as.matrix()
+
+dat.wide.num <- dat.long %>%
+  dplyr::mutate(logFC = replace_na(logFC, 0)) %>%
+  tidyr::pivot_wider(id_cols = gene_name, names_from = Project, values_from = logFC) %>%
+  tibble::column_to_rownames("gene_name") %>%
+  as.matrix()
+
+
+# NOT RUN, check if the values all have onnly one gene for each project****
+# All were good. 
+#dat.wide <- dat.long %>%
+#  dplyr::select(Project,gene_name, logFC) %>%
+#  dplyr::group_by(gene_name, Project) %>%
+#  dplyr::summarise(n = dplyr::n(), .groups = "drop") %>%
+#  dplyr::filter(n > 1L)
+
+
+coldata <- as.data.frame(colnames(dat.wide)) %>%
+  dplyr::mutate("Projects" = "colnames(dat.wide)")
+
+my_colors1 <- RColorBrewer::brewer.pal(8, "Dark2")
+my_colors2 <- RColorBrewer::brewer.pal(8, "Pastel1")
+colors <- c(my_colors1, my_colors2)
+# First figure in the data visualization model.R is using the col.ll data 
+my_colors_final <- c("BLCA"="#1B9E77", "BRCA"="#D95F02", "COAD"="#7570B3", "ESCA"="#E7298A", "HNSC"="#66A61E", "KICH"="#E6AB02", "KIRC"="#A6761D", "KIRP"="#666666", "LIHC"="#FBB4AE", "LUAD"="#B3CDE3", "LUSC"="#CCEBC5", "PRAD"="#DECBE4", "READ"="#FED9A6", "STAD"="#FFFFCC", "THCA"="#E5D8BD", "UCEC"="#FDDAEC")
+
+proj <- colnames(dat.wide.num)
+
+ha_column <- HeatmapAnnotation(
+  "Projects" = c("BLCA","BRCA","COAD","ESCA","HNSC","KICH","KIRC","KIRP","LIHC","LUAD","LUSC","PRAD","READ","STAD","THCA","UCEC"),
+  col = list("BLCA"="#1B9E77", "BRCA"="#D95F02", "COAD"="#7570B3", "ESCA"="#E7298A", "HNSC"="#66A61E", "KICH"="#E6AB02", "KIRC"="#A6761D", "KIRP"="#666666", "LIHC"="#FBB4AE", "LUAD"="#B3CDE3", "LUSC"="#CCEBC5", "PRAD"="#DECBE4", "READ"="#FED9A6", "STAD"="#FFFFCC", "THCA"="#E5D8BD", "UCEC"="#FDDAEC"))
+
+
+# cluster the rows
+row.dend <- as.dendrogram(hclust(dist(dat.wide.num)))
+hm <- Heatmap(matrix = dat.wide.num,
+  heatmap_legend_param = list(title = "Log2 Fold Change", at = c(-6, -3, 0,3,6)),
+  top_annotation = ha_column,
+  col = colorRamp2(c(-6, 0, 6), c("navy", "white", "red")),
+  show_column_names = TRUE,
+  column_names_gp = grid::gpar(fontsize = 9),
+  show_row_names = FALSE,
+  cluster_columns = FALSE,
+  show_row_dend = TRUE,
+  show_column_dend = FALSE,
+  use_raster = TRUE)
+
+row_ord.dat <- row_order(hm)
+
+mat.ordered <- dat.wide[order(row_ord.dat),]
+mat.ordered <- as.data.frame(mat.ordered)
+mat.ordered$Genes <- rownames(mat.ordered)
+data.table::fwrite(file = "/Volumes/My Passport/artBio_consultation/results/heatmaps/projects_fc.txt", x= mat.ordered, row.names = FALSE)
+
+pdf("/Volumes/My Passport/artBio_consultation/results/heatmaps/projects_fc.pdf", width = 12, height = 6)
+ComplexHeatmap::draw(hm,ht_gap = unit(1, "cm"),row_title = "Genes encoding surface proteins", column_title = "Differentially expressed genes encoding for surface proteins TCGA")
+dev.off()
+
+
+
+
+
+
+
+
+
+  
+  
+  
+  
+  
+
+
+
+
 
 
 ```
@@ -325,7 +456,7 @@ generate.a.gene.expression.matrix <- function(proj, val){
 # the annotated genes from the GESP paper. Intersect them to make a Venn diagram and 
 # make a HM of each of these genes using the CPMs or TPMs? 
 
-create.heatmap.from.DE.genes <- function(gene.list, gene.expression.matrix){
+create.heatmap.from.DE.genes <- function(gene.expresison.matrix, coldata){
   
   
   
